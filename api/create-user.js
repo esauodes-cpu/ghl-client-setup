@@ -213,7 +213,7 @@ module.exports = async function handler(req, res) {
       email: user.email,
       role: roleName,
       tempPassword,
-      loginUrl: "https://app.gohighlevel.com/",
+      loginUrl: process.env.GHL_LOGIN_URL || "https://app.gohighlevel.com/",
       result,
     });
   } catch (err) {
