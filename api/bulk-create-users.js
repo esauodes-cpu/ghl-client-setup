@@ -28,6 +28,7 @@ function normalizeHeader(header) {
 }
 
 function parseBuffer(buffer, contentType, fileUrl) {
+  console.log("PARSED:", JSON.stringify(users));
   var isXlsx =
     contentType.includes("spreadsheetml") ||
     contentType.includes("ms-excel") ||
