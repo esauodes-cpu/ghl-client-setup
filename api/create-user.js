@@ -2,8 +2,8 @@
 // Crea un único usuario en la subcuenta del cliente.
 // Refactorizado para delegar la lógica core a lib/user-core.js
 
-const { createUserCore } = require(”../lib/user-core”);
-const { validateWebhookSecret, sendResponse, sendError } = require(”../lib/helpers”);
+const { createUserCore } = require("../lib/user-core");
+const { validateWebhookSecret, sendResponse, sendError } = require("../lib/helpers");
 
 /**
 
