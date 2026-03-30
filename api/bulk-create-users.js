@@ -1,18 +1,16 @@
 // api/bulk-create-users.js
-// Recibe un archivo CSV o XLSX con usuarios y los crea en GHL uno por uno.
+// Recibe un JSON con la URL del archivo de usuarios y los crea en GHL uno por uno.
 //
-// Dependencias a instalar si no están:
-//   npm install formidable papaparse xlsx
+// Dependencias a instalar:
+//   npm install papaparse xlsx
+//   (ya no necesitas formidable)
 //
-// Content-Type del request: multipart/form-data
-// Campos del form:
+// Content-Type del request: application/json
+// Body:
 //   companyId  (string, required)
 //   locationId (string, required)
-//   file       (file, required) — .csv o .xlsx
+//   fileUrl    (string, required) — Signed URL de GCS donde está el CSV/XLSX
 
-const fs = require(“fs”);
-const path = require(“path”);
-const formidable = require(“formidable”);
 const Papa = require(“papaparse”);
 const XLSX = require(“xlsx”);
 
@@ -22,7 +20,6 @@ const { validateWebhookSecret, sendResponse, sendError } = require(”../lib/hel
 // ============================================================
 // COLUMN MAP
 // Mapea los headers de la plantilla al schema de createUserCore.
-// Ajusta aquí si el cliente envía headers en otro idioma/capitalización.
 // ============================================================
 const COLUMN_MAP = {
 “nombre(s)”:   “firstName”,
@@ -38,59 +35,47 @@ const COLUMN_MAP = {
 “role”:        “role”,
 };
 
-/**
-
-- Normaliza el header de una columna al key canónico del schema.
-- Elimina espacios extra, convierte a minúsculas y stripea acentos opcionales.
-  */
-  function normalizeHeader(header) {
-  return header
-  .trim()
-  .toLowerCase()
-  .normalize(“NFD”)
-  .replace(/[\u0300-\u036f]/g, “”) // strip diacritics
-  .replace(/\s+/g, “ “);
-  }
+function normalizeHeader(header) {
+return header
+.trim()
+.toLowerCase()
+.normalize(“NFD”)
+.replace(/[\u0300-\u036f]/g, “”)
+.replace(/\s+/g, “ “);
+}
 
 /**
 
-- Parsea el archivo (CSV o XLSX) y devuelve un array de objetos
-- ya mapeados al schema de usuario.
-- 
-- @param {string} filePath - Ruta temporal del archivo
-- @param {string} mimeType - MIME type del archivo
-- @param {string} originalName - Nombre original para inferir extensión
-- @returns {Array<{ firstName, lastName, email, phone?, role? }>}
+- Parsea el buffer del archivo (CSV o XLSX) y devuelve un array
+- de objetos mapeados al schema de usuario.
   */
-  function parseFile(filePath, mimeType, originalName) {
-  const ext = path.extname(originalName).toLowerCase();
-  let rows = [];
+  function parseBuffer(buffer, contentType, fileUrl) {
+  const isXlsx =
+  contentType.includes(“spreadsheetml”) ||
+  contentType.includes(“ms-excel”) ||
+  fileUrl.includes(”.xlsx”) ||
+  fileUrl.includes(”.xls”);
 
-if (ext === “.csv” || mimeType === “text/csv” || mimeType === “text/plain”) {
-const content = fs.readFileSync(filePath, “utf8”);
-const parsed = Papa.parse(content, {
+let rows = [];
+
+if (isXlsx) {
+const workbook = XLSX.read(buffer, { type: “buffer” });
+const sheetName = workbook.SheetNames[0];
+rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: “” });
+} else {
+const text = buffer.toString(“utf8”);
+const parsed = Papa.parse(text, {
 header: true,
 skipEmptyLines: true,
 transformHeader: (h) => h.trim(),
 });
 rows = parsed.data;
-} else if (
-ext === “.xlsx” || ext === “.xls” ||
-mimeType === “application/vnd.openxmlformats-officedocument.spreadsheetml.sheet” ||
-mimeType === “application/vnd.ms-excel”
-) {
-const workbook = XLSX.readFile(filePath);
-const sheetName = workbook.SheetNames[0];
-rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: “” });
-} else {
-throw new Error(`Unsupported file type: "${ext || mimeType}". Use .csv or .xlsx`);
 }
 
 if (!rows || rows.length === 0) {
 throw new Error(“The file is empty or has no data rows.”);
 }
 
-// Mapear headers de la plantilla al schema interno
 return rows.map((row, index) => {
 const mapped = {};
 
@@ -103,10 +88,9 @@ for (const [rawKey, value] of Object.entries(row)) {
   }
 }
 
-// Validación mínima por fila
 const missing = ["firstName", "lastName", "email"].filter((k) => !mapped[k]);
 if (missing.length > 0) {
-  mapped._rowIndex = index + 2; // +2 = header row + 1-based index
+  mapped._rowIndex = index + 2;
   mapped._missingFields = missing;
 }
 
@@ -124,13 +108,10 @@ return mapped;
 
 - POST /api/bulk-create-users
 - 
-- multipart/form-data:
+- application/json:
 - companyId  (string, required)
 - locationId (string, required)
-- file       (file, required) — CSV o XLSX con columnas:
-- ```
-           Nombre(s) | Apellido(s) | Email | Teléfono | Rol
-  ```
+- fileUrl    (string, required) — URL del archivo CSV o XLSX
 - 
 - Response:
 - {
@@ -166,53 +147,46 @@ if (!validateWebhookSecret(req)) {
 return sendError(res, 401, “Unauthorized.”);
 }
 
-// Parsear el multipart/form-data
-const form = formidable({
-maxFileSize: 5 * 1024 * 1024, // 5 MB máximo
-keepExtensions: true,
-allowEmptyFiles: false,
-});
+const { companyId, locationId, fileUrl } = req.body || {};
 
-let fields, files;
+if (!companyId)  return sendError(res, 400, ‘Missing “companyId”.’);
+if (!locationId) return sendError(res, 400, ‘Missing “locationId”.’);
+if (!fileUrl)    return sendError(res, 400, ‘Missing “fileUrl”.’);
+
+// Descargar el archivo desde la Signed URL
+let fileBuffer;
+let contentType = “”;
 try {
-[fields, files] = await form.parse(req);
-} catch (err) {
-return sendError(res, 400, “Failed to parse form data.”, err.message);
+const fileResponse = await fetch(fileUrl);
+if (!fileResponse.ok) {
+return sendError(res, 422, `Failed to download file: ${fileResponse.status} ${fileResponse.statusText}`);
 }
-
-// formidable v3 devuelve arrays — tomar el primer valor
-const companyId  = Array.isArray(fields.companyId)  ? fields.companyId[0]  : fields.companyId;
-const locationId = Array.isArray(fields.locationId) ? fields.locationId[0] : fields.locationId;
-const uploadedFile = Array.isArray(files.file) ? files.file[0] : files.file;
-
-if (!companyId)     return sendError(res, 400, ‘Missing field “companyId”.’);
-if (!locationId)    return sendError(res, 400, ‘Missing field “locationId”.’);
-if (!uploadedFile)  return sendError(res, 400, ‘Missing field “file”.’);
+contentType = fileResponse.headers.get(“content-type”) || “”;
+const arrayBuffer = await fileResponse.arrayBuffer();
+fileBuffer = Buffer.from(arrayBuffer);
+} catch (err) {
+return sendError(res, 422, “Failed to fetch file from URL.”, err.message);
+}
 
 // Parsear el archivo
 let users;
 try {
-users = parseFile(
-uploadedFile.filepath,
-uploadedFile.mimetype,
-uploadedFile.originalFilename || “upload”
-);
+users = parseBuffer(fileBuffer, contentType, fileUrl);
 } catch (err) {
 return sendError(res, 422, “Failed to parse file.”, err.message);
 }
 
-// Iterar usuarios y crear uno por uno
+// Iterar y crear usuarios
 const results = [];
 let created = 0;
-let failed = 0;
+let failed  = 0;
 let skipped = 0;
 
 for (let i = 0; i < users.length; i++) {
 const user = users[i];
-const rowNumber = (user._rowIndex) || (i + 2); // fila real en el archivo
+const rowNumber = user._rowIndex || (i + 2);
 
 ```
-// Saltar filas con campos requeridos faltantes
 if (user._missingFields && user._missingFields.length > 0) {
   skipped++;
   results.push({
@@ -246,13 +220,6 @@ try {
 }
 ```
 
-}
-
-// Limpiar archivo temporal
-try {
-fs.unlinkSync(uploadedFile.filepath);
-} catch (_) {
-// No crítico si falla la limpieza
 }
 
 return sendResponse(res, 200, {
