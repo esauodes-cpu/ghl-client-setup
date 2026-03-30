@@ -28,7 +28,6 @@ function normalizeHeader(header) {
 }
 
 function parseBuffer(buffer, contentType, fileUrl) {
-  console.log("PARSED:", JSON.stringify(users));
   var isXlsx =
     contentType.includes("spreadsheetml") ||
     contentType.includes("ms-excel") ||
@@ -42,11 +41,9 @@ function parseBuffer(buffer, contentType, fileUrl) {
     var sheetName = workbook.SheetNames[0];
     var sheet = workbook.Sheets[sheetName];
 
-    // Obtener el rango real de la hoja para ignorar columnas vacias
     var ref = sheet["!ref"];
     var range = XLSX.utils.decode_range(ref);
 
-    // Leer headers de la primera fila para construir un mapa de columna -> header
     var headerMap = {};
     for (var col = range.s.c; col <= range.e.c; col++) {
       var cellAddr = XLSX.utils.encode_cell({ r: range.s.r, c: col });
@@ -56,7 +53,6 @@ function parseBuffer(buffer, contentType, fileUrl) {
       }
     }
 
-    // Leer filas de datos manualmente ignorando columnas sin header
     for (var row = range.s.r + 1; row <= range.e.r; row++) {
       var rowObj = {};
       var hasData = false;
@@ -90,7 +86,6 @@ function parseBuffer(buffer, contentType, fileUrl) {
     var mapped = {};
 
     Object.keys(row).forEach(function(rawKey) {
-      // Ignorar keys vacias o generadas automaticamente por xlsx
       if (!rawKey || rawKey.startsWith("__")) return;
       var value = row[rawKey];
       var normalized = normalizeHeader(rawKey);
@@ -149,55 +144,6 @@ module.exports = async function handler(req, res) {
     return sendError(res, 422, "Failed to parse file.", err.message);
   }
 
-  var results = [];
-  var created = 0;
-  var failed  = 0;
-  var skipped = 0;
-
-  for (var i = 0; i < users.length; i++) {
-    var user = users[i];
-    var rowNumber = user._rowIndex || (i + 2);
-
-    if (user._missingFields && user._missingFields.length > 0) {
-      skipped++;
-      results.push({
-        row: rowNumber,
-        email: user.email || null,
-        status: "skipped",
-        error: "Missing required fields: " + user._missingFields.join(", "),
-      });
-      continue;
-    }
-
-    try {
-      var data = await createUserCore({ companyId: companyId, locationId: locationId, user: user });
-      created++;
-      results.push({
-        row: rowNumber,
-        email: user.email,
-        status: "created",
-        userId: data.userId,
-        role: data.role,
-        tempPassword: data.tempPassword,
-      });
-    } catch (err) {
-      failed++;
-      results.push({
-        row: rowNumber,
-        email: user.email,
-        status: "failed",
-        error: err.message,
-      });
-    }
-  }
-
-  return sendResponse(res, 200, {
-    success: true,
-    locationId: locationId,
-    total: users.length,
-    created: created,
-    failed: failed,
-    skipped: skipped,
-    results: results,
-  });
+  // DEBUG TEMPORAL - remover despues
+  return sendResponse(res, 200, { debug: true, users: users });
 };
