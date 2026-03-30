@@ -91,7 +91,11 @@ function parseBuffer(buffer, contentType, fileUrl) {
       var normalized = normalizeHeader(rawKey);
       var schemaKey = COLUMN_MAP[normalized];
       if (schemaKey && value !== undefined && value !== "") {
-        mapped[schemaKey] = String(value).trim();
+        value = String(value).trim();
+        if (schemaKey === "phone") {
+          value = value.startsWith("+") ? value : "+" + value;
+        }
+        mapped[schemaKey] = value;
       }
     });
 
