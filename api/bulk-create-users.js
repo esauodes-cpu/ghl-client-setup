@@ -177,7 +177,6 @@ module.exports = async function handler(req, res) {
         status: "created",
         userId: data.userId,
         role: data.role,
-        tempPassword: data.tempPassword,
       });
     } catch (err) {
       failed++;
@@ -198,5 +197,8 @@ module.exports = async function handler(req, res) {
     failed: failed,
     skipped: skipped,
     results: results,
+    passwordNote: created > 0
+      ? "Cada usuario creado recibirá un email de activación de GHL para establecer su contraseña."
+      : undefined,
   });
 };
