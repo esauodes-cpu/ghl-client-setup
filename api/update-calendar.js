@@ -38,7 +38,7 @@ module.exports = async function handler(req, res) {
       `/calendars/${calendarId}`
     );
 
-    const teamMembers = (current.calendar?.teamMembers || []).map((member) => ({
+    const teamMembers = (current.calendar?.teamMembers || current.teamMembers || []).map((member) => ({
       ...member,
       locationConfigurations: [{ kind: "custom", location: meetingUrl }],
     }));
