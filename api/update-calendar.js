@@ -31,6 +31,18 @@ module.exports = async function handler(req, res) {
   if (!meetingUrl) return sendError(res, 400, 'Missing "meetingUrl".');
 
   try {
+    const current = await ghlRequest(
+      companyId,
+      locationId,
+      "GET",
+      `/calendars/${calendarId}`
+    );
+
+    const teamMembers = (current.teamMembers || []).map((member) => ({
+      ...member,
+      locationConfigurations: [{ kind: "custom", location: meetingUrl }],
+    }));
+
     const event = await ghlRequest(
       companyId,
       locationId,
@@ -38,6 +50,7 @@ module.exports = async function handler(req, res) {
       `/calendars/${calendarId}`,
       {
         locationConfigurations: [{ kind: "custom", location: meetingUrl }],
+        teamMembers,
       }
     );
 
